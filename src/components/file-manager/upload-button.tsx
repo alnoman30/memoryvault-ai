@@ -46,7 +46,9 @@ export function UploadButton({ folderId }: { folderId: string | null }) {
         .upload(path, file, { contentType: file.type || undefined, upsert: false });
 
       if (uploadError) {
-        problems.push(`"${file.name}": আপলোড হয়নি। / Upload failed.`);
+        problems.push(
+          `"${file.name}": আপলোড হয়নি। / Upload failed. (${uploadError.message})`,
+        );
         continue;
       }
 
@@ -62,7 +64,9 @@ export function UploadButton({ folderId }: { folderId: string | null }) {
       if (insertError) {
         // Do not leave an orphan file behind.
         await supabase.storage.from("documents").remove([path]);
-        problems.push(`"${file.name}": সংরক্ষণ করা যায়নি। / Could not save.`);
+        problems.push(
+          `"${file.name}": সংরক্ষণ করা যায়নি। / Could not save. (${insertError.message})`,
+        );
       }
     }
 

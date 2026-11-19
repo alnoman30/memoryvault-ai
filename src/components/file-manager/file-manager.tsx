@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { connection } from "next/server";
 import { redirect } from "next/navigation";
 import { ChevronRight } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
@@ -17,6 +18,7 @@ const dateFormat = new Intl.DateTimeFormat("en-GB", {
 });
 
 export async function FileManager({ searchParams }: { searchParams: SearchParams }) {
+  await connection(); // user data: render at request time, never ahead of time
   const { folder } = await searchParams;
 
   const supabase = await createClient();
@@ -26,7 +28,7 @@ export async function FileManager({ searchParams }: { searchParams: SearchParams
   if (!user) redirect("/login");
 
   // Row Level Security means these queries only ever return this user's rows.
-  const { data: folderData } = await supabase
+  const { data: folderData, error: folderError } = await supabase
     .from("folders")
     .select("id, name, parent_id")
     .order("name");
@@ -41,9 +43,19 @@ export async function FileManager({ searchParams }: { searchParams: SearchParams
     .from("documents")
     .select("id, name, size_bytes, is_sensitive, folder_id, created_at")
     .order("created_at", { ascending: false });
-  const { data: docData } = await (currentId
+  const { data: docData, error: docError } = await (currentId
     ? docQuery.eq("folder_id", currentId)
     : docQuery.is("folder_id", null));
+
+  // Never hide a database problem: show it so it can be fixed.
+  const loadError = folderError ?? docError;
+  if (loadError) {
+    return (
+      <p role="alert" className="mt-8 rounded-xl border p-5 text-sm text-red-500">
+        তথ্য আনা যায়নি। / Could not load your files: {loadError.message}
+      </p>
+    );
+  }
 
   const documents: DocumentItem[] = (docData ?? []).map((d) => ({
     id: d.id,

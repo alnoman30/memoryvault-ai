@@ -1,10 +1,12 @@
 import { Suspense } from "react";
+import { connection } from "next/server";
 import { redirect } from "next/navigation";
 import { logout } from "@/app/auth/actions";
 import { FileManager } from "@/components/file-manager/file-manager";
 import { createClient } from "@/lib/supabase/server";
 
 async function Welcome() {
+  await connection(); // user data: render at request time, never ahead of time
   const supabase = await createClient();
   const {
     data: { user },
