@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { FileText, FolderOpen, MessageCircle, ShieldCheck } from "lucide-react";
 
 const features = [
@@ -53,9 +54,17 @@ export default function Home() {
         ))}
       </ul>
 
-      <p className="mt-12 text-sm text-muted-foreground">
-        Sign up and login are coming in the next phase.
-      </p>
+      <div className="mt-12 flex gap-3">
+        <Link
+          href="/signup"
+          className="rounded-lg bg-foreground px-5 py-2 font-medium text-background"
+        >
+          Sign up / সাইন আপ
+        </Link>
+        <Link href="/login" className="rounded-lg border px-5 py-2 font-medium">
+          Log in / লগইন
+        </Link>
+      </div>
     </main>
   );
 }
