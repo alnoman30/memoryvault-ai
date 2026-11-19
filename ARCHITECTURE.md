@@ -26,4 +26,14 @@ Every table has a `user_id` column and Row Level Security (RLS) policies
 so a user can only ever read or write their own rows and files.
 
 ## Status
-Phase 3 in progress: project scaffold created.
+- Done: project scaffold, Supabase auth (sign up / log in / log out), database
+  schema with Row Level Security, private storage bucket, file manager
+  (folders, upload, rename, move, preview, download, delete).
+- Next: text extraction and OCR, embeddings and vector search, AI chat.
+
+## File manager notes
+- Files are uploaded from the browser straight to the private `documents`
+  bucket under `<user_id>/<random id>.<ext>`; the original name is kept only
+  in the `documents` table.
+- Preview and download use signed links that expire after 60 seconds.
+- A folder can only be deleted when it is empty.

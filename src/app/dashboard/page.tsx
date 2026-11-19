@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { logout } from "@/app/auth/actions";
+import { FileManager } from "@/components/file-manager/file-manager";
 import { createClient } from "@/lib/supabase/server";
 
 async function Welcome() {
@@ -14,35 +15,35 @@ async function Welcome() {
     redirect("/login");
   }
 
-  return (
-    <p className="mt-2 text-muted-foreground">
-      স্বাগতম! আপনি লগইন করেছেন: {user.email}
-    </p>
-  );
+  return <p className="text-sm text-muted-foreground">{user.email}</p>;
 }
 
-export default function DashboardPage() {
+export default function DashboardPage({ searchParams }: PageProps<"/dashboard">) {
   return (
-    <main className="flex flex-1 flex-col items-center px-6 py-16">
+    <main className="flex flex-1 flex-col items-center px-4 py-10 sm:px-6">
       <div className="w-full max-w-3xl">
-        <h1 className="text-3xl font-semibold">Dashboard</h1>
+        <header className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold">MemoryVault AI</h1>
+            <Suspense fallback={<p className="text-sm text-muted-foreground">...</p>}>
+              <Welcome />
+            </Suspense>
+          </div>
+          <form action={logout}>
+            <button
+              type="submit"
+              className="rounded-lg border px-3 py-2 text-sm font-medium"
+            >
+              Log out / লগআউট
+            </button>
+          </form>
+        </header>
 
-        <Suspense fallback={<p className="mt-2 text-muted-foreground">...</p>}>
-          <Welcome />
+        <Suspense
+          fallback={<p className="mt-8 text-sm text-muted-foreground">Loading...</p>}
+        >
+          <FileManager searchParams={searchParams} />
         </Suspense>
-
-        <div className="mt-8 rounded-xl border bg-card p-5 text-sm text-muted-foreground">
-          File manager and AI chat are coming in the next phases.
-        </div>
-
-        <form action={logout} className="mt-8">
-          <button
-            type="submit"
-            className="rounded-lg border px-4 py-2 text-sm font-medium"
-          >
-            Log out / লগআউট
-          </button>
-        </form>
       </div>
     </main>
   );
