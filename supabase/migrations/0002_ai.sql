@@ -16,8 +16,75 @@
 -- =====================================================================
 
 -- pgvector lives in the "extensions" schema on Supabase.
+-- If it was switched on earlier in another schema (e.g. "public"), move it.
 create schema if not exists extensions;
-create extension if not exists vector with schema extensions;
+do $$
+declare
+  current_schema_name text;
+begin
+  select n.nspname into current_schema_name
+  from pg_extension e join pg_namespace n on n.oid = e.extnamespace
+  where e.extname = 'vector';
+
+  if current_schema_name is null then
+    create extension vector with schema extensions;
+  elsif current_schema_name <> 'extensions' then
+    alter extension vector set schema extensions;
+  end if;
+end
+$$;
+
+-- ---------------------------------------------------------------
+-- Start from a known state.
+-- A project may already contain older, hand-made versions of the tables
+-- below (with other columns), extra policies, or other match_chunks
+-- functions. This block cleans that up. Only the chunk table can be
+-- rebuilt, because its content is re-created by reading the documents
+-- again; conversations and messages keep their rows.
+-- ---------------------------------------------------------------
+do $$
+declare
+  p record;
+  needs_rebuild boolean := false;
+begin
+  if to_regclass('public.document_chunks') is not null then
+    select
+      count(*) filter (where column_name in
+        ('id', 'user_id', 'document_id', 'page', 'chunk_index', 'content', 'embedding', 'fts', 'created_at')) < 9
+      or bool_or(column_name = 'embedding' and format_type(a.atttypid, a.atttypmod) not like '%vector(768)')
+      or bool_or(column_name = 'id' and data_type <> 'uuid')
+    into needs_rebuild
+    from information_schema.columns c
+    join pg_attribute a
+      on a.attrelid = 'public.document_chunks'::regclass and a.attname = c.column_name
+    where c.table_schema = 'public' and c.table_name = 'document_chunks';
+
+    if needs_rebuild then
+      drop table public.document_chunks cascade;
+      -- Their text is gone, so every document is read again by the app.
+      update public.documents set status = 'uploaded'
+      where status in ('processing', 'ready', 'failed');
+    end if;
+  end if;
+
+  for p in
+    select schemaname, tablename, policyname
+    from pg_policies
+    where schemaname = 'public'
+      and tablename in ('document_chunks', 'conversations', 'messages')
+  loop
+    execute format('drop policy %I on %I.%I', p.policyname, p.schemaname, p.tablename);
+  end loop;
+
+  for p in
+    select oid::regprocedure as signature
+    from pg_proc
+    where proname = 'match_chunks' and pronamespace = 'public'::regnamespace
+  loop
+    execute format('drop function %s', p.signature);
+  end loop;
+end
+$$;
 
 -- ---------------------------------------------------------------
 -- Uploads: no size limit at bucket level, any file type.
@@ -87,6 +154,8 @@ create table if not exists public.document_chunks (
   created_at timestamptz not null default now()
 );
 
+-- (only reached for a missing table, or one that already had every column)
+
 create index if not exists document_chunks_user_id_idx on public.document_chunks (user_id);
 create index if not exists document_chunks_document_id_idx on public.document_chunks (document_id);
 create index if not exists document_chunks_fts_idx on public.document_chunks using gin (fts);
@@ -133,6 +202,13 @@ create table if not exists public.conversations (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- Older hand-made versions may miss some columns.
+alter table public.conversations add column if not exists user_id uuid default auth.uid()
+  references auth.users (id) on delete cascade;
+alter table public.conversations add column if not exists title text not null default 'New chat';
+alter table public.conversations add column if not exists created_at timestamptz not null default now();
+alter table public.conversations add column if not exists updated_at timestamptz not null default now();
 
 create index if not exists conversations_user_updated_idx
   on public.conversations (user_id, updated_at desc);
@@ -193,6 +269,15 @@ create table if not exists public.messages (
   created_at timestamptz not null default now()
 );
 
+alter table public.messages add column if not exists user_id uuid default auth.uid()
+  references auth.users (id) on delete cascade;
+alter table public.messages add column if not exists conversation_id uuid
+  references public.conversations (id) on delete cascade;
+alter table public.messages add column if not exists role text not null default 'user';
+alter table public.messages add column if not exists content text not null default '';
+alter table public.messages add column if not exists sources jsonb not null default '[]'::jsonb;
+alter table public.messages add column if not exists created_at timestamptz not null default now();
+
 create index if not exists messages_conversation_idx
   on public.messages (conversation_id, created_at);
 
@@ -222,7 +307,6 @@ create policy "messages_delete_own" on public.messages
 -- Results from meaning (vector) and keywords (full text) are merged with
 -- reciprocal rank fusion. With no embedding, keyword search alone is used.
 -- ---------------------------------------------------------------
-drop function if exists public.match_chunks(extensions.vector, text, integer);
 create function public.match_chunks(
   query_embedding extensions.vector(768),
   query_text text,
