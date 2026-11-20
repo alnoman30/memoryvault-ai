@@ -1,8 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { useRouter } from "next/navigation";
 import {
+  AlertCircle,
+  Archive,
+  CheckCircle2,
+  Loader2,
+  RefreshCw,
   ChevronRight,
   CloudUpload,
   Download,
@@ -11,13 +17,18 @@ import {
   FolderOpen,
   FolderPlus,
   Pencil,
-  ShieldAlert,
   Trash2,
 } from "lucide-react";
 import { Menu } from "@/components/ui/menu";
 import { btn } from "@/components/ui/styles";
 import { useToast } from "@/components/ui/toast";
-import { formatBytes } from "@/lib/documents";
+import { fileKindOf, formatBytes, isReadable } from "@/lib/documents";
+import {
+  getProcessingSnapshot,
+  getServerProcessingSnapshot,
+  processDocument,
+  subscribeProcessing,
+} from "./processing";
 import { FileIcon } from "./file-icon";
 import {
   DeleteModal,
@@ -37,7 +48,42 @@ type Props = {
   subfolders: { id: string; name: string }[];
   documents: DocItem[];
   folderOptions: { id: string; label: string }[];
+  pendingIds: string[];
 };
+
+// Small line under a file name that says what the AI has done with it.
+function StatusLine({ doc, busy }: { doc: DocItem; busy: boolean }) {
+  if (busy || doc.status === "uploaded" || doc.status === "processing") {
+    return (
+      <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-accent-soft px-2 py-0.5 text-[0.68rem] font-medium text-accent">
+        <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+        Reading with AI…
+      </span>
+    );
+  }
+  if (doc.status === "failed") {
+    return (
+      <span title={doc.error ?? undefined} className="mt-1 inline-flex items-center gap-1 rounded-full bg-danger-soft px-2 py-0.5 text-[0.68rem] font-medium text-danger">
+        <AlertCircle className="h-3 w-3" aria-hidden="true" />
+        Could not read
+      </span>
+    );
+  }
+  if (doc.status === "skipped") {
+    return (
+      <span title={doc.error ?? undefined} className="mt-1 inline-flex items-center gap-1 rounded-full bg-line/60 px-2 py-0.5 text-[0.68rem] font-medium text-muted">
+        <Archive className="h-3 w-3" aria-hidden="true" />
+        Stored only
+      </span>
+    );
+  }
+  return (
+    <span title={doc.error ?? undefined} className="mt-1 inline-flex items-center gap-1 rounded-full bg-ok-soft px-2 py-0.5 text-[0.68rem] font-medium text-ok">
+      <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
+      {doc.error ? "Stored, no text found" : "Ready for chat"}
+    </span>
+  );
+}
 
 export function Explorer({
   currentId,
@@ -46,6 +92,7 @@ export function Explorer({
   subfolders,
   documents,
   folderOptions,
+  pendingIds,
 }: Props) {
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -53,7 +100,27 @@ export function Explorer({
   const [deleteTarget, setDeleteTarget] = useState<NameTarget | null>(null);
   const [moveDoc, setMoveDoc] = useState<DocItem | null>(null);
   const [previewDoc, setPreviewDoc] = useState<DocItem | null>(null);
+  const busy = useSyncExternalStore(
+    subscribeProcessing,
+    getProcessingSnapshot,
+    getServerProcessingSnapshot,
+  );
   const toast = useToast();
+  const router = useRouter();
+
+  function run(id: string, restart = false) {
+    processDocument(id, { restart }).then((status) => {
+      if (status === "failed") toast("A document could not be read. Open its menu to try again.", "error");
+      router.refresh();
+    });
+  }
+
+  // Keep reading every document that is still waiting, anywhere in the vault.
+  const pendingKey = pendingIds.join(",");
+  useEffect(() => {
+    for (const id of pendingKey ? pendingKey.split(",") : []) run(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the key covers the ids
+  }, [pendingKey]);
 
   async function download(doc: DocItem) {
     const error = await startDownload(doc.id);
@@ -202,12 +269,7 @@ export function Explorer({
                       <span>{formatBytes(doc.size_bytes)}</span>
                       <span>{doc.dateLabel}</span>
                     </p>
-                    {doc.is_sensitive && (
-                      <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-accent-soft px-2 py-0.5 text-[0.68rem] font-medium text-accent">
-                        <ShieldAlert className="h-3 w-3" aria-hidden="true" />
-                        Sensitive
-                      </span>
-                    )}
+                    <StatusLine doc={doc} busy={busy.has(doc.id)} />
                   </div>
                   <span className="hidden text-sm text-muted sm:block">{formatBytes(doc.size_bytes)}</span>
                   <span className="hidden text-sm text-muted sm:block">{doc.dateLabel}</span>
@@ -218,6 +280,18 @@ export function Explorer({
                       { label: "Download", icon: Download, onSelect: () => download(doc) },
                       { label: "Rename", icon: Pencil, onSelect: () => setRenameTarget({ kind: "document", id: doc.id, name: doc.name }) },
                       { label: "Move to…", icon: FolderInput, onSelect: () => setMoveDoc(doc) },
+                      ...(isReadable(fileKindOf(doc.name)) || doc.status === "failed"
+                        ? [
+                            {
+                              label: "Read again with AI",
+                              icon: RefreshCw,
+                              onSelect: () => {
+                                toast("Reading the document again…", "info");
+                                run(doc.id, true);
+                              },
+                            },
+                          ]
+                        : []),
                       { label: "Delete", icon: Trash2, danger: true, onSelect: () => setDeleteTarget({ kind: "document", id: doc.id, name: doc.name }) },
                     ]}
                   />
@@ -232,6 +306,7 @@ export function Explorer({
       <UploadModal
         open={uploadOpen}
         onClose={() => setUploadOpen(false)}
+        onUploaded={(ids) => ids.forEach((id) => run(id))}
         folderId={currentId}
         folderName={currentName}
       />

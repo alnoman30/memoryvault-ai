@@ -1,13 +1,25 @@
+import Link from "next/link";
 import { FolderOpen, LogOut, MessageSquareText, Settings } from "lucide-react";
 import { logout } from "@/app/auth/actions";
 import { Brand } from "@/components/ui/logo";
 import { FREE_STORAGE_BYTES, formatBytes } from "@/lib/documents";
 
+type Section = "files" | "chat" | "settings";
+
 type ShellProps = {
   email: string;
   usedBytes: number;
+  active?: Section;
+  /** Removes the page padding, for full-height screens such as the chat. */
+  bare?: boolean;
   children: React.ReactNode;
 };
+
+const NAV: { id: Section; href: string; label: string; Icon: typeof FolderOpen }[] = [
+  { id: "files", href: "/dashboard", label: "Files", Icon: FolderOpen },
+  { id: "chat", href: "/chat", label: "AI chat", Icon: MessageSquareText },
+  { id: "settings", href: "/settings", label: "Settings", Icon: Settings },
+];
 
 function SignOutButton({ compact = false }: { compact?: boolean }) {
   return (
@@ -27,17 +39,34 @@ function SignOutButton({ compact = false }: { compact?: boolean }) {
   );
 }
 
-// Page frame for signed-in screens: sidebar on desktop, slim top bar on phones.
-export function AppShell({ email, usedBytes, children }: ShellProps) {
+// Page frame for signed-in screens: sidebar on desktop, top bar + tabs on phones.
+export function AppShell({ email, usedBytes, active = "files", bare = false, children }: ShellProps) {
   const percent = Math.min(100, (usedBytes / FREE_STORAGE_BYTES) * 100);
   const initial = (email[0] ?? "?").toUpperCase();
 
   return (
     <div className="flex min-h-dvh flex-1 flex-col lg:flex-row">
       {/* Phone top bar */}
-      <header className="sticky top-0 z-30 flex items-center justify-between border-b border-line bg-bg/85 px-4 py-3 backdrop-blur lg:hidden">
-        <Brand />
-        <SignOutButton compact />
+      <header className="sticky top-0 z-30 border-b border-line bg-bg/85 backdrop-blur lg:hidden">
+        <div className="flex items-center justify-between px-4 py-3">
+          <Brand />
+          <SignOutButton compact />
+        </div>
+        <nav aria-label="Main" className="flex gap-1 px-3 pb-2">
+          {NAV.map(({ id, href, label, Icon }) => (
+            <Link
+              key={id}
+              href={href}
+              aria-current={active === id ? "page" : undefined}
+              className={`flex flex-1 items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm transition ${
+                active === id ? "bg-accent font-medium text-accent-ink" : "text-muted hover:bg-line/50"
+              }`}
+            >
+              <Icon className="h-4 w-4" />
+              {label}
+            </Link>
+          ))}
+        </nav>
       </header>
 
       {/* Desktop sidebar */}
@@ -46,33 +75,21 @@ export function AppShell({ email, usedBytes, children }: ShellProps) {
           <Brand />
 
           <nav aria-label="Main" className="mt-10 flex flex-col gap-1">
-            <span
-              aria-current="page"
-              className="flex items-center gap-3 rounded-xl bg-accent px-3.5 py-2.5 text-sm font-medium text-accent-ink"
-            >
-              <FolderOpen className="h-[1.1rem] w-[1.1rem]" />
-              Files
-            </span>
-            <span
-              aria-disabled="true"
-              className="flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm text-muted"
-            >
-              <MessageSquareText className="h-[1.1rem] w-[1.1rem]" />
-              <span className="flex-1">AI chat</span>
-              <span className="rounded-full bg-line/60 px-2 py-0.5 font-mono text-[0.62rem] uppercase tracking-wider">
-                Soon
-              </span>
-            </span>
-            <span
-              aria-disabled="true"
-              className="flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm text-muted"
-            >
-              <Settings className="h-[1.1rem] w-[1.1rem]" />
-              <span className="flex-1">Settings</span>
-              <span className="rounded-full bg-line/60 px-2 py-0.5 font-mono text-[0.62rem] uppercase tracking-wider">
-                Soon
-              </span>
-            </span>
+            {NAV.map(({ id, href, label, Icon }) => (
+              <Link
+                key={id}
+                href={href}
+                aria-current={active === id ? "page" : undefined}
+                className={`flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm transition ${
+                  active === id
+                    ? "bg-accent font-medium text-accent-ink"
+                    : "text-muted hover:bg-line/50 hover:text-ink"
+                }`}
+              >
+                <Icon className="h-[1.1rem] w-[1.1rem]" />
+                {label}
+              </Link>
+            ))}
           </nav>
         </div>
 
@@ -116,7 +133,13 @@ export function AppShell({ email, usedBytes, children }: ShellProps) {
         </div>
       </aside>
 
-      <main className="min-w-0 flex-1 px-4 py-8 sm:px-8 lg:px-12 lg:py-12">{children}</main>
+      <main
+        className={
+          bare ? "flex min-h-0 min-w-0 flex-1 flex-col" : "min-w-0 flex-1 px-4 py-8 sm:px-8 lg:px-12 lg:py-12"
+        }
+      >
+        {children}
+      </main>
     </div>
   );
 }

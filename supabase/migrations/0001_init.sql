@@ -15,6 +15,32 @@
 -- =====================================================================
 
 -- ---------------------------------------------------------------
+-- Step 0: start from a known state.
+-- A project may already contain older or hand-made rules and helpers
+-- (for example a function called owns_folder with different parameter
+-- names). Leftover policies could be looser than ours, so we remove every
+-- policy on OUR tables first and then create exactly the ones below.
+-- Only tables of this app are touched, and no data is deleted.
+-- ---------------------------------------------------------------
+do $$
+declare
+  p record;
+begin
+  for p in
+    select schemaname, tablename, policyname
+    from pg_policies
+    where (schemaname = 'public' and tablename in ('profiles', 'folders', 'documents'))
+       or (schemaname = 'storage' and tablename = 'objects'
+           and (coalesce(qual, '') || coalesce(with_check, '')) like '%''documents''%')
+  loop
+    execute format('drop policy %I on %I.%I', p.policyname, p.schemaname, p.tablename);
+  end loop;
+end
+$$;
+
+drop function if exists public.owns_folder(uuid);
+
+-- ---------------------------------------------------------------
 -- Helper: keep updated_at fresh
 -- ---------------------------------------------------------------
 create or replace function public.set_updated_at()
@@ -251,12 +277,13 @@ revoke all on public.folders from anon;
 revoke all on public.documents from anon;
 
 -- ---------------------------------------------------------------
--- Private storage bucket for uploaded files (max 20 MB per file).
+-- Private storage bucket for uploaded files. No bucket-level size limit:
+-- the project's global limit applies (Supabase Free plan: 50 MB per file).
 -- ---------------------------------------------------------------
 insert into storage.buckets (id, name, public, file_size_limit)
-values ('documents', 'documents', false, 20971520)
+values ('documents', 'documents', false, null)
 on conflict (id) do update
-  set public = false, file_size_limit = 20971520;
+  set public = false, file_size_limit = null;
 
 -- Files must be stored under "<user_id>/..." and only the owner can use them.
 drop policy if exists "storage_documents_select_own" on storage.objects;

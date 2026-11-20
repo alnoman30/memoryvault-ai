@@ -10,7 +10,7 @@ import {
   Folder,
   Home,
   Loader2,
-  ShieldAlert,
+  Sparkles,
   X,
 } from "lucide-react";
 import {
@@ -27,6 +27,7 @@ import { btn, inputClass } from "@/components/ui/styles";
 import { useToast } from "@/components/ui/toast";
 import { createClient } from "@/lib/supabase/client";
 import { formatBytes, makeStoragePath, validateUpload } from "@/lib/documents";
+import { uploadFile } from "@/lib/upload";
 import { FileIcon, fileKind } from "./file-icon";
 import type { DocItem, NameTarget } from "./types";
 
@@ -417,9 +418,11 @@ type PreviewState =
   | { status: "ready"; url: string }
   | { status: "error"; message: string };
 
+const PREVIEWABLE = new Set(["image", "pdf", "text", "video", "audio"]);
+
 function PreviewBody({ doc, onClose }: { doc: DocItem; onClose: () => void }) {
   const kind = fileKind(doc.name);
-  const canPreview = kind === "image" || kind === "pdf" || kind === "text";
+  const canPreview = PREVIEWABLE.has(kind);
   const [state, setState] = useState<PreviewState>({ status: "loading" });
   const [downloading, startTransition] = useTransition();
   const toast = useToast();
@@ -449,7 +452,16 @@ function PreviewBody({ doc, onClose }: { doc: DocItem; onClose: () => void }) {
 
   return (
     <>
-      <div className="min-h-0 flex-1 px-6 pb-5">
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-5">
+        {(doc.summary || doc.error) && (
+          <div className="mb-4 flex gap-3 rounded-2xl border border-line bg-surface p-4 text-sm">
+            <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-accent" aria-hidden="true" />
+            <div className="min-w-0">
+              {doc.summary && <p className="leading-relaxed">{doc.summary}</p>}
+              {doc.error && <p className={doc.summary ? "mt-1 text-muted" : "text-muted"}>{doc.error}</p>}
+            </div>
+          </div>
+        )}
         <div className="grid h-[60vh] place-items-center overflow-hidden rounded-2xl border border-line bg-surface">
           {!canPreview && (
             <div className="flex flex-col items-center gap-4 px-6 text-center">
@@ -470,7 +482,13 @@ function PreviewBody({ doc, onClose }: { doc: DocItem; onClose: () => void }) {
             // eslint-disable-next-line @next/next/no-img-element -- short-lived signed URL
             <img src={state.url} alt={doc.name} className="max-h-full max-w-full object-contain" />
           )}
-          {canPreview && state.status === "ready" && kind !== "image" && (
+          {canPreview && state.status === "ready" && kind === "video" && (
+            <video src={state.url} controls className="max-h-full max-w-full" />
+          )}
+          {canPreview && state.status === "ready" && kind === "audio" && (
+            <audio src={state.url} controls className="w-[90%]" />
+          )}
+          {canPreview && state.status === "ready" && (kind === "pdf" || kind === "text") && (
             <iframe
               src={state.url}
               title={doc.name}
@@ -481,7 +499,9 @@ function PreviewBody({ doc, onClose }: { doc: DocItem; onClose: () => void }) {
       </div>
       <ModalFooter>
         <span className="mr-auto hidden text-xs text-muted sm:block">
-          {formatBytes(doc.size_bytes)} · added {doc.dateLabel}
+          {formatBytes(doc.size_bytes)}
+          {doc.page_count ? ` · ${doc.page_count} ${doc.page_count === 1 ? "page" : "pages"}` : ""} · added{" "}
+          {doc.dateLabel}
         </span>
         <button type="button" onClick={onClose} className={btn("ghost")}>
           Close
@@ -502,11 +522,13 @@ function PreviewBody({ doc, onClose }: { doc: DocItem; onClose: () => void }) {
 export function UploadModal({
   open,
   onClose,
+  onUploaded,
   folderId,
   folderName,
 }: {
   open: boolean;
   onClose: () => void;
+  onUploaded: (documentIds: string[]) => void;
   folderId: string | null;
   folderName: string | null;
 }) {
@@ -518,7 +540,7 @@ export function UploadModal({
       description={`They will be added to ${folderName ? `"${folderName}"` : "your main library"}.`}
       width="34rem"
     >
-      <UploadForm folderId={folderId} onClose={onClose} />
+      <UploadForm folderId={folderId} onClose={onClose} onUploaded={onUploaded} />
     </Modal>
   );
 }
@@ -527,12 +549,20 @@ type UploadItem = {
   key: string;
   file: File;
   state: "ready" | "uploading" | "done" | "error";
+  progress: number;
   message?: string;
 };
 
-function UploadForm({ folderId, onClose }: { folderId: string | null; onClose: () => void }) {
+function UploadForm({
+  folderId,
+  onClose,
+  onUploaded,
+}: {
+  folderId: string | null;
+  onClose: () => void;
+  onUploaded: (documentIds: string[]) => void;
+}) {
   const [items, setItems] = useState<UploadItem[]>([]);
-  const [sensitive, setSensitive] = useState(false);
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -550,6 +580,7 @@ function UploadForm({ folderId, onClose }: { folderId: string | null; onClose: (
         return {
           key: crypto.randomUUID(),
           file,
+          progress: 0,
           state: problem ? "error" : "ready",
           message: problem ?? undefined,
         };
@@ -581,56 +612,61 @@ function UploadForm({ folderId, onClose }: { folderId: string | null; onClose: (
     const detail = (message: string) =>
       process.env.NODE_ENV !== "production" ? ` (${message})` : "";
 
-    let uploaded = 0;
+    const uploadedIds: string[] = [];
     let failed = 0;
 
     for (const item of items.filter((i) => i.state === "ready")) {
-      patch(item.key, { state: "uploading" });
+      patch(item.key, { state: "uploading", progress: 0 });
       const path = makeStoragePath(user.id, crypto.randomUUID(), item.file.name);
 
       // The file goes straight from the browser to private storage.
       // Storage rules only allow writing inside "<your user id>/".
-      const { error: uploadError } = await supabase.storage
-        .from("documents")
-        .upload(path, item.file, {
-          contentType: item.file.type || undefined,
-          upsert: false,
-        });
-      if (uploadError) {
-        patch(item.key, {
-          state: "error",
-          message: `Upload failed.${detail(uploadError.message)}`,
-        });
+      const result = await uploadFile({
+        supabase,
+        file: item.file,
+        path,
+        onProgress: (progress) => patch(item.key, { progress }),
+      });
+      if (!result.ok) {
+        patch(item.key, { state: "error", message: result.error });
         failed++;
         continue;
       }
 
-      const { error: insertError } = await supabase.from("documents").insert({
-        name: item.file.name,
-        storage_path: path,
-        mime_type: item.file.type || null,
-        size_bytes: item.file.size,
-        folder_id: folderId,
-        is_sensitive: sensitive,
-      });
-      if (insertError) {
+      const { data: row, error: insertError } = await supabase
+        .from("documents")
+        .insert({
+          name: item.file.name.slice(0, 255),
+          storage_path: path,
+          mime_type: item.file.type || null,
+          size_bytes: item.file.size,
+          folder_id: folderId,
+        })
+        .select("id")
+        .single();
+      if (insertError || !row) {
         // Do not leave an orphan file behind.
         await supabase.storage.from("documents").remove([path]);
         patch(item.key, {
           state: "error",
-          message: `Could not save the file record.${detail(insertError.message)}`,
+          message: `Could not save the file record.${detail(insertError?.message ?? "")}`,
         });
         failed++;
         continue;
       }
 
-      patch(item.key, { state: "done" });
-      uploaded++;
+      patch(item.key, { state: "done", progress: 1 });
+      uploadedIds.push(row.id as string);
     }
 
     setBusy(false);
     router.refresh();
-    if (uploaded > 0) toast(`${uploaded} file${uploaded === 1 ? "" : "s"} uploaded`);
+    if (uploadedIds.length > 0) {
+      onUploaded(uploadedIds);
+      toast(
+        `${uploadedIds.length} file${uploadedIds.length === 1 ? "" : "s"} uploaded. The AI is reading ${uploadedIds.length === 1 ? "it" : "them"} now.`,
+      );
+    }
     if (failed === 0) onClose();
   }
 
@@ -664,7 +700,8 @@ function UploadForm({ folderId, onClose }: { folderId: string | null; onClose: (
             </span>
             <span className="font-medium">Drop files here, or click to browse</span>
             <span className="text-xs text-muted">
-              PDF, PNG, JPG, WEBP, TXT, MD, CSV, DOCX · up to 20 MB each
+              Any file type. Large files upload in resumable pieces. The AI reads PDF, images,
+              DOCX and text files.
             </span>
           </button>
           <input
@@ -672,7 +709,6 @@ function UploadForm({ folderId, onClose }: { folderId: string | null; onClose: (
             type="file"
             multiple
             hidden
-            accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.md,.csv,.docx"
             onChange={(e) => {
               addFiles(Array.from(e.target.files ?? []));
               e.target.value = "";
@@ -698,9 +734,17 @@ function UploadForm({ folderId, onClose }: { folderId: string | null; onClose: (
                       : item.state === "done"
                         ? "Uploaded"
                         : item.state === "uploading"
-                          ? "Uploading…"
+                          ? `Uploading… ${Math.round(item.progress * 100)}% of ${formatBytes(item.file.size)}`
                           : formatBytes(item.file.size)}
                   </p>
+                  {item.state === "uploading" && (
+                    <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-line">
+                      <div
+                        className="h-full rounded-full bg-accent transition-all"
+                        style={{ width: `${Math.max(2, item.progress * 100)}%` }}
+                      />
+                    </div>
+                  )}
                 </div>
                 {item.state === "uploading" && <Spinner />}
                 {item.state === "done" && <CheckCircle2 className="h-5 w-5 text-ok" />}
@@ -718,32 +762,6 @@ function UploadForm({ folderId, onClose }: { folderId: string | null; onClose: (
             ))}
           </ul>
         )}
-
-        <button
-          type="button"
-          role="switch"
-          aria-checked={sensitive}
-          onClick={() => setSensitive((v) => !v)}
-          disabled={busy}
-          className="mt-5 flex w-full items-start gap-3 rounded-2xl border border-line bg-surface p-4 text-left transition hover:border-muted/50"
-        >
-          <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-accent" />
-          <span className="min-w-0 flex-1">
-            <span className="block text-sm font-medium">Contains sensitive identity data</span>
-            <span className="mt-0.5 block text-xs text-muted">
-              NID, passport, bank details. These files are never sent to an external AI service
-              unless you explicitly allow it.
-            </span>
-          </span>
-          <span
-            aria-hidden="true"
-            className={`relative mt-1 h-6 w-10 shrink-0 rounded-full transition ${sensitive ? "bg-accent" : "bg-line"}`}
-          >
-            <span
-              className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${sensitive ? "left-[1.1rem]" : "left-0.5"}`}
-            />
-          </span>
-        </button>
       </ModalBody>
       <ModalFooter>
         <button type="button" onClick={onClose} className={btn("ghost")}>

@@ -15,19 +15,24 @@ const features = [
     status: "Live",
   },
   {
+    title: "Any file, any size",
+    text: "Upload any file type. Big files go up in resumable pieces, so a bad connection does not start you over.",
+    status: "Live",
+  },
+  {
+    title: "Reads scans and photos",
+    text: "Text PDFs are read instantly. Scanned pages, photos of receipts and ID cards are read by AI, in Bangla and English.",
+    status: "Live",
+  },
+  {
     title: "Ask in Bangla or English",
-    text: "A chat assistant that reads your documents and answers in the language you ask in.",
-    status: "Next",
+    text: "A chat assistant that searches your documents by meaning and answers in the language you ask in, and remembers the conversation.",
+    status: "Live",
   },
   {
     title: "Answers you can verify",
     text: "Every answer points to the document and the page it came from, so you never have to just trust it.",
-    status: "Next",
-  },
-  {
-    title: "You decide what leaves",
-    text: "Sensitive documents such as ID cards are only sent to an AI service if you explicitly allow it.",
-    status: "Next",
+    status: "Live",
   },
 ];
 
@@ -84,7 +89,7 @@ export default function Home() {
                 </span>
                 <div>
                   <p className="text-sm font-medium">National ID card</p>
-                  <p className="text-xs text-muted">Sensitive · 1 page</p>
+                  <p className="text-xs text-muted">Photo · read by AI</p>
                 </div>
               </div>
             </div>
@@ -114,7 +119,7 @@ export default function Home() {
             <div className="mt-2 rounded-2xl border border-line bg-ink p-5 text-bg shadow-[var(--shadow)]">
               <p className="flex items-center gap-2 font-mono text-[0.65rem] uppercase tracking-[0.16em] opacity-70">
                 <MessageSquareText className="h-3.5 w-3.5" />
-                Illustration of what is coming
+                Ask your vault
               </p>
               <p className="mt-3 text-sm opacity-80">When does my lease end?</p>
               <p className="mt-2 text-sm leading-relaxed">

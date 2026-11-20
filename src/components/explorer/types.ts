@@ -1,9 +1,13 @@
+import type { DocStatus } from "@/lib/documents";
+
 export type DocItem = {
   id: string;
   name: string;
   size_bytes: number | null;
-  is_sensitive: boolean;
-  status: "uploaded" | "processing" | "ready" | "failed";
+  status: DocStatus;
+  error: string | null;
+  summary: string | null;
+  page_count: number | null;
   folder_id: string | null;
   dateLabel: string;
 };

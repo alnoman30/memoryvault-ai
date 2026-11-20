@@ -1,48 +1,65 @@
 # MemoryVault AI - Architecture
 
 ## Stack
-- **Next.js (App Router) + TypeScript**: web app and server actions
+- **Next.js (App Router) + TypeScript**: web app, server actions, route handlers
 - **Tailwind CSS**: styling, with design tokens in `src/app/globals.css`
 - **Supabase Auth**: registration and login
-- **PostgreSQL**: data, with Row Level Security (RLS) on every table
+- **PostgreSQL + pgvector**: data and embeddings, Row Level Security (RLS) on every table
 - **Supabase Storage**: one private bucket, `documents`
+- **Google Gemini** (free tier): reading scans and photos, embeddings, summaries, chat
 - **Vercel**: hosting
 
 ## Interface language
-The interface is English only. Only the AI chat assistant speaks Bangla and English.
+The interface is English. The chat assistant answers in the language of the question
+(Bangla or English).
 
-## Data model (`supabase/migrations/0001_init.sql`)
-- `profiles`: one row per user, created by a database trigger at sign up.
-  `allow_external_ai` is `false` by default.
+## Data model
+`supabase/migrations/0001_init.sql`
+- `profiles`: one row per user, created by a trigger at sign up.
 - `folders`: nested folders (`parent_id`).
-- `documents`: file metadata. The file itself lives in Storage at
-  `<user_id>/<random id>.<ext>`.
-  `is_sensitive` marks identity documents.
-- Helper `owns_folder(uuid)`: a SECURITY DEFINER check used by policies. A policy on
-  `folders` cannot query `folders` directly (Postgres reports "infinite recursion
-  detected in policy"), so the lookup goes through this function.
+- `documents`: file metadata. The file lives in Storage at `<user_id>/<random id>.<ext>`.
+- `owns_folder(uuid)`: SECURITY DEFINER helper used by policies (avoids policy recursion).
+
+`supabase/migrations/0002_ai.sql`
+- `documents` gains `status` (`uploaded | processing | ready | failed | skipped`), `stage`
+  (`extract | ocr | embed | summary`), `page_count`, `ocr_pages`, `error`, `summary`.
+- `document_chunks`: pieces of text with `page`, an `embedding vector(768)` (HNSW index) and a
+  generated `fts tsvector` ('simple' config, works for Bangla and English).
+- `conversations` and `messages` (with the cited `sources` as JSON): chat history.
+- `match_chunks(embedding, text, count)`: hybrid search, SECURITY INVOKER so RLS applies,
+  vector and keyword results merged with reciprocal rank fusion.
+- The bucket has no size limit of its own; the project's global limit applies.
+
+## Code map
+| Path | What it does |
+| --- | --- |
+| `src/lib/ai/config.ts` | model names (env overridable, with fallbacks), limits |
+| `src/lib/ai/gemini.ts` | the only file that talks to Gemini: embed, generate, stream, transcribe, summarise |
+| `src/lib/ai/errors.ts` | rate-limit detection, retry delays, friendly messages |
+| `src/lib/extract.ts` | local reading: PDF (unpdf), DOCX (mammoth), plain text |
+| `src/lib/text/chunk.ts` | splitting text at paragraph / sentence (`. ! ? ।`) boundaries |
+| `src/lib/processing.ts` | the step-by-step document reader |
+| `src/lib/chat.ts` | prompt, sources, citations, search query helpers |
+| `src/lib/upload.ts` | browser upload (single request or resumable TUS) |
+| `src/app/api/documents/[id]/process` | one processing step |
+| `src/app/api/chat` | streaming chat (NDJSON events) |
+| `src/components/explorer` | file manager; `processing.ts` drives reading from the browser |
+| `src/components/chat` | chat screen and the safe answer formatter |
 
 ## Request flow
-- The browser uploads a file straight to the private bucket. Storage policies only
-  allow writing inside the signed-in user's own folder, then a `documents` row is added.
-- Folder and file operations are server actions that run as the signed-in user, so RLS
-  applies to everything they do.
-- Preview and download use signed links that expire after 60 seconds.
-- A folder can only be deleted when it is empty.
+**Upload.** The browser uploads directly to the private bucket (storage policies only allow
+`<own user id>/...`), then inserts the `documents` row and starts processing.
 
-## UI building blocks (`src/components/ui`)
-`Modal` (native `<dialog>`; becomes a bottom sheet on phones), `Toast`, `Menu`,
-button and input class helpers. File manager screens are in `src/components/explorer`.
+**Processing.** Serverless functions have a time limit, so reading runs in steps. The browser
+calls the step endpoint in a loop; each call works for at most ~4 minutes and saves progress
+in the `documents` row. A free-tier limit returns `retryAfterMs` and the browser waits.
 
-## Planned: reading documents with an AI provider
-There is no in-browser OCR. Text extraction will go through an **AI provider
-abstraction** (`src/lib/ai/`), starting with Gemini, so the provider can be swapped.
+**Chat.** The question (plus the previous one for short follow-ups) is embedded and
+`match_chunks` returns the best passages. Gemini gets the chat history, the document list with
+summaries and the numbered passages, and must cite them as `[1]`. The answer is streamed, then
+saved with the sources it cited. Citations open the file at the cited page.
 
-1. After upload, the server sends the file to the provider to extract text with page numbers.
-2. The text is split into chunks, embedded, and stored with `pgvector`.
-3. In chat, the question is embedded, similar chunks are retrieved, and the assistant
-   answers with citations (file name and page).
-
-Rule: a document marked `is_sensitive` is **never** sent to an external provider unless
-the user has explicitly allowed it (`profiles.allow_external_ai`) after being told what
-that means.
+## AI provider
+All provider code is in `src/lib/ai`. To use another provider, replace `gemini.ts` with a module
+that has the same functions (`embedTexts`, `generateText`, `streamText`, `withFilePart`,
+`transcribe`, `summarize`). Embeddings must stay 768-dimensional or the migration must change.

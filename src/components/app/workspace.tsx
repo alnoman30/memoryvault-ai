@@ -28,7 +28,7 @@ export async function Workspace({ searchParams }: { searchParams: SearchParams }
 
   const [foldersResult, sizesResult] = await Promise.all([
     supabase.from("folders").select("id, name, parent_id").order("name"),
-    supabase.from("documents").select("size_bytes"),
+    supabase.from("documents").select("id, size_bytes, status"),
   ]);
 
   const allFolders: FolderNode[] = foldersResult.data ?? [];
@@ -41,7 +41,7 @@ export async function Workspace({ searchParams }: { searchParams: SearchParams }
 
   const docQuery = supabase
     .from("documents")
-    .select("id, name, size_bytes, is_sensitive, status, folder_id, created_at")
+    .select("id, name, size_bytes, status, error, summary, page_count, folder_id, created_at")
     .order("created_at", { ascending: false });
   const docsResult = await (currentId
     ? docQuery.eq("folder_id", currentId)
@@ -66,13 +66,20 @@ export async function Workspace({ searchParams }: { searchParams: SearchParams }
     id: d.id,
     name: d.name,
     size_bytes: d.size_bytes,
-    is_sensitive: d.is_sensitive,
     status: d.status as DocItem["status"],
+    error: d.error,
+    summary: d.summary,
+    page_count: d.page_count,
     folder_id: d.folder_id,
     dateLabel: dateFormat.format(new Date(d.created_at)),
   }));
 
   const breadcrumbs = buildBreadcrumbs(allFolders, currentId);
+
+  // Documents anywhere in the vault that still need reading by the AI.
+  const pendingIds = (sizesResult.data ?? [])
+    .filter((d) => d.status === "uploaded" || d.status === "processing")
+    .map((d) => d.id);
 
   return (
     <AppShell email={user.email ?? ""} usedBytes={usedBytes}>
@@ -85,6 +92,7 @@ export async function Workspace({ searchParams }: { searchParams: SearchParams }
           .map(({ id, name }) => ({ id, name }))}
         documents={documents}
         folderOptions={folderOptions(allFolders)}
+        pendingIds={pendingIds}
       />
     </AppShell>
   );

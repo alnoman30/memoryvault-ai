@@ -1,22 +1,19 @@
-import { File, FileImage, FileText, FileType2 } from "lucide-react";
-import { getExtension } from "@/lib/documents";
+import { File, FileArchive, FileAudio, FileImage, FileText, FileType2, FileVideo } from "lucide-react";
+import { fileKindOf, type FileKind } from "@/lib/documents";
 
-const IMAGE = ["png", "jpg", "jpeg", "webp"];
-
-export function fileKind(name: string): "image" | "pdf" | "word" | "text" {
-  const ext = getExtension(name);
-  if (IMAGE.includes(ext)) return "image";
-  if (ext === "pdf") return "pdf";
-  if (ext === "docx") return "word";
-  return "text";
+export function fileKind(name: string): FileKind {
+  return fileKindOf(name);
 }
 
-const looks = {
+const looks: Record<FileKind, { Icon: typeof File; tint: string }> = {
   image: { Icon: FileImage, tint: "bg-ok-soft text-ok" },
   pdf: { Icon: FileText, tint: "bg-danger-soft text-danger" },
   word: { Icon: FileType2, tint: "bg-accent-soft text-accent" },
   text: { Icon: File, tint: "bg-line/50 text-muted" },
-} as const;
+  video: { Icon: FileVideo, tint: "bg-accent-soft text-accent" },
+  audio: { Icon: FileAudio, tint: "bg-ok-soft text-ok" },
+  other: { Icon: FileArchive, tint: "bg-line/50 text-muted" },
+};
 
 // A coloured tile showing what kind of file this is.
 export function FileIcon({ name, size = "md" }: { name: string; size?: "md" | "lg" }) {

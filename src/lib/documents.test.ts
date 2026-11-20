@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  MAX_UPLOAD_BYTES,
   cleanName,
+  fileKindOf,
   formatBytes,
   getExtension,
+  isReadable,
   isUuid,
   makeStoragePath,
   validateUpload,
@@ -20,22 +21,35 @@ describe("getExtension", () => {
   });
 });
 
+describe("fileKindOf / isReadable", () => {
+  it("detects kinds", () => {
+    expect(fileKindOf("a.pdf")).toBe("pdf");
+    expect(fileKindOf("photo.JPG")).toBe("image");
+    expect(fileKindOf("cv.docx")).toBe("word");
+    expect(fileKindOf("notes.md")).toBe("text");
+    expect(fileKindOf("clip.mp4")).toBe("video");
+    expect(fileKindOf("song.mp3")).toBe("audio");
+    expect(fileKindOf("backup.zip")).toBe("other");
+  });
+  it("knows which kinds the AI reads", () => {
+    expect(isReadable("pdf")).toBe(true);
+    expect(isReadable("image")).toBe(true);
+    expect(isReadable("video")).toBe(false);
+    expect(isReadable("other")).toBe(false);
+  });
+});
+
 describe("validateUpload", () => {
-  it("accepts a normal PDF", () => {
+  it("accepts any type and any size", () => {
     expect(validateUpload({ name: "nid.pdf", size: 1000 })).toBeNull();
+    expect(validateUpload({ name: "backup.zip", size: 1000 })).toBeNull();
+    expect(validateUpload({ name: "huge.mp4", size: 40 * 1024 ** 3 })).toBeNull();
   });
   it("accepts Bangla file names", () => {
     expect(validateUpload({ name: "জাতীয়পরিচয়পত্র.jpg", size: 1000 })).toBeNull();
   });
-  it("rejects unsupported types", () => {
-    expect(validateUpload({ name: "virus.exe", size: 1000 })).not.toBeNull();
-  });
-  it("rejects empty and oversized files", () => {
+  it("rejects empty files", () => {
     expect(validateUpload({ name: "a.pdf", size: 0 })).not.toBeNull();
-    expect(
-      validateUpload({ name: "a.pdf", size: MAX_UPLOAD_BYTES + 1 }),
-    ).not.toBeNull();
-    expect(validateUpload({ name: "a.pdf", size: MAX_UPLOAD_BYTES })).toBeNull();
   });
 });
 
@@ -75,6 +89,7 @@ describe("formatBytes", () => {
     expect(formatBytes(512)).toBe("512 B");
     expect(formatBytes(2048)).toBe("2.0 KB");
     expect(formatBytes(5 * 1024 * 1024)).toBe("5.0 MB");
+    expect(formatBytes(3 * 1024 ** 3)).toBe("3.00 GB");
     expect(formatBytes(null)).toBe("");
   });
 });
