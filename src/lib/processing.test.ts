@@ -54,6 +54,9 @@ describe("runProcessingStep", () => {
     expect(result.status).toBe("ready");
     const doc = db.tables.documents[0];
     expect(doc.page_count).toBe(2);
+    // The summary is written after the response, in the background.
+    expect(doc.summary).toBeFalsy();
+    await result.background?.();
     expect(doc.summary).toContain("2028");
 
     const chunks = db.tables.document_chunks;
@@ -72,6 +75,7 @@ describe("runProcessingStep", () => {
     expect(db.tables.document_chunks).toHaveLength(1);
     expect(db.tables.document_chunks[0].embedding).toBeNull();
     expect(ai.transcribe).not.toHaveBeenCalled();
+    expect(result.background).toBeUndefined();
   });
 
   it("reads DOCX files", async () => {
@@ -112,6 +116,14 @@ describe("runProcessingStep", () => {
     expect(second.status).toBe("ready");
     // The text was not read twice.
     expect(db.tables.document_chunks).toHaveLength(2);
+  });
+
+  it("a failing summary never breaks a ready document", async () => {
+    ai.summarize.mockRejectedValueOnce(new AiRateLimitError(1000));
+    const { db, supabase } = setup("contract.docx", `${USER}/c.docx`, fixture("contract.docx"));
+    const result = await runProcessingStep(supabase, USER, "doc-1");
+    await expect(result.background?.()).resolves.toBeUndefined();
+    expect(db.tables.documents[0].status).toBe("ready");
   });
 
   it("marks broken files as failed with a friendly message", async () => {

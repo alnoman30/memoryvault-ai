@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { AppShell, ShellSkeleton } from "@/components/app/app-shell";
 import { ChatView, type ChatMessage } from "@/components/chat/chat-view";
 import { createClient } from "@/lib/supabase/server";
+import { getAuthUser } from "@/lib/supabase/auth";
 import { isAiConfigured } from "@/lib/ai/config";
 import { isUuid } from "@/lib/documents";
 
@@ -22,9 +23,7 @@ async function ChatWorkspace({ searchParams }: { searchParams: PageProps<"/chat"
   const { c } = await searchParams;
 
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getAuthUser(supabase);
   if (!user) redirect("/login");
 
   const [conversationsResult, docsResult] = await Promise.all([

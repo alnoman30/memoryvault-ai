@@ -1,4 +1,6 @@
+import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { getAuthUser } from "@/lib/supabase/auth";
 import { isUuid } from "@/lib/documents";
 import { runProcessingStep } from "@/lib/processing";
 
@@ -11,15 +13,14 @@ export async function POST(request: Request, ctx: RouteContext<"/api/documents/[
   if (!isUuid(id)) return Response.json({ error: "Unknown document." }, { status: 400 });
 
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getAuthUser(supabase);
   if (!user) return Response.json({ error: "Please sign in again." }, { status: 401 });
 
   const restart = new URL(request.url).searchParams.get("restart") === "1";
 
   try {
-    const result = await runProcessingStep(supabase, user.id, id, { restart });
+    const { background, ...result } = await runProcessingStep(supabase, user.id, id, { restart });
+    if (background) after(background);
     return Response.json(result);
   } catch (error) {
     console.error("Processing step crashed", error);

@@ -7,7 +7,8 @@ export function fakeSupabase(files: Record<string, Uint8Array>) {
   let nextId = 1;
 
   function builder(table: string) {
-    let mode: "select" | "update" | "insert" | "delete" = "select";
+    let mode: "select" | "update" | "insert" | "delete" | "upsert" = "select";
+    let countOnly = false;
     let values: Row | Row[] = {};
     const filters: ((r: Row) => boolean)[] = [];
     let orderBy: string | null = null;
@@ -25,6 +26,14 @@ export function fakeSupabase(files: Record<string, Uint8Array>) {
         for (const v of list) tables[table].push({ id: `row-${nextId++}`, embedding: null, ...v });
         return { data: null, error: null };
       }
+      if (mode === "upsert") {
+        for (const v of values as Row[]) {
+          const existing = tables[table].find((r) => r.id === v.id);
+          if (existing) Object.assign(existing, v);
+          else tables[table].push({ ...v });
+        }
+        return { data: null, error: null };
+      }
       if (mode === "update") {
         for (const r of rows()) Object.assign(r, values);
         return { data: null, error: null };
@@ -34,11 +43,15 @@ export function fakeSupabase(files: Record<string, Uint8Array>) {
         tables[table] = tables[table].filter((r) => !remove.has(r));
         return { data: null, error: null };
       }
+      if (countOnly) return { data: null, count: rows().length, error: null };
       return { data: rows().map((r) => ({ ...r })), error: null };
     };
 
     const api = {
-      select: () => api,
+      select: (_cols?: string, opts?: { count?: string; head?: boolean }) => (
+        (countOnly = Boolean(opts?.head)), api
+      ),
+      upsert: (v: Row[]) => ((mode = "upsert"), (values = v), api),
       insert: (v: Row | Row[]) => ((mode = "insert"), (values = v), api),
       update: (v: Row) => ((mode = "update"), (values = v), api),
       delete: () => ((mode = "delete"), api),

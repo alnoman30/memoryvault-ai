@@ -29,6 +29,8 @@ export type StepResult = {
   stage: string | null;
   message?: string;
   retryAfterMs?: number;
+  /** Extra work (the summary) to run after the response has been sent. */
+  background?: () => Promise<void>;
 };
 
 type Doc = {
@@ -44,8 +46,8 @@ type Doc = {
 
 // 0 in ocr_pages means "read the whole file" (images, unreadable PDFs).
 const WHOLE_FILE = 0;
-const OCR_PAGES_PER_CALL = 5;
-const EMBED_BATCH = 50;
+const OCR_PAGES_PER_CALL = 8;
+const EMBED_BATCH = 100;
 const SUMMARY_INPUT_CHARS = 12_000;
 
 type Supabase = SupabaseClient;
@@ -76,6 +78,25 @@ async function insertChunks(supabase: Supabase, rows: ReturnType<typeof chunkRow
 async function update(supabase: Supabase, id: string, values: Record<string, unknown>) {
   const { error } = await supabase.from("documents").update(values).eq("id", id);
   if (error) throw new Error(`Could not update the document. ${error.message}`);
+}
+
+// The summary is nice to have, so it is written after the document is
+// already "ready" and the browser has its answer.
+async function writeSummary(supabase: Supabase, id: string, name: string) {
+  try {
+    const { data: chunks } = await supabase
+      .from("document_chunks")
+      .select("content")
+      .eq("document_id", id)
+      .order("chunk_index")
+      .limit(40);
+    const text = (chunks ?? []).map((c) => c.content).join("\n\n").slice(0, SUMMARY_INPUT_CHARS);
+    if (!text) return;
+    const summary = await summarize(name, text);
+    if (summary) await update(supabase, id, { summary });
+  } catch (error) {
+    console.warn("Summary skipped", id, messageOf(error));
+  }
 }
 
 /** Puts a document back to the start, so it is read again from scratch. */
@@ -225,20 +246,18 @@ export async function runProcessingStep(
       /* ---------------- embed ---------------- */
       if (doc.stage === "embed") {
         if (!aiReady) {
-          await update(supabase, id, { stage: "summary" });
           doc = { ...doc, stage: "summary" };
           continue;
         }
         const { data: pending, error } = await supabase
           .from("document_chunks")
-          .select("id, content")
+          .select("id, user_id, document_id, page, chunk_index, content")
           .eq("document_id", id)
           .is("embedding", null)
           .order("chunk_index")
           .limit(EMBED_BATCH);
         if (error) throw new Error(error.message);
         if (!pending || pending.length === 0) {
-          await update(supabase, id, { stage: "summary" });
           doc = { ...doc, stage: "summary" };
           continue;
         }
@@ -247,48 +266,25 @@ export async function runProcessingStep(
           pending.map((c) => `${doc.name}\n${c.content}`),
           "RETRIEVAL_DOCUMENT",
         );
-        for (let i = 0; i < pending.length; i += 10) {
-          const slice = pending.slice(i, i + 10);
-          const results = await Promise.all(
-            slice.map((c, j) =>
-              supabase
-                .from("document_chunks")
-                .update({ embedding: JSON.stringify(vectors[i + j]) })
-                .eq("id", c.id),
-            ),
-          );
-          const failed = results.find((r) => r.error);
-          if (failed?.error) throw new Error(failed.error.message);
-        }
+        // One request saves the whole batch (instead of one per chunk).
+        const { error: saveError } = await supabase.from("document_chunks").upsert(
+          pending.map((c, i) => ({ ...c, embedding: JSON.stringify(vectors[i]) })),
+          { onConflict: "id" },
+        );
+        if (saveError) throw new Error(saveError.message);
         continue;
       }
 
-      /* ---------------- summary ---------------- */
+      /* ---------------- finish ---------------- */
       if (doc.stage === "summary") {
-        let summary: string | null = null;
-        const { data: chunks } = await supabase
+        const { count } = await supabase
           .from("document_chunks")
-          .select("content")
-          .eq("document_id", id)
-          .order("chunk_index")
-          .limit(40);
-        const text = (chunks ?? []).map((c) => c.content).join("\n\n").slice(0, SUMMARY_INPUT_CHARS);
-
-        if (aiReady && text) {
-          try {
-            summary = await summarize(doc.name, text);
-          } catch (error) {
-            // A missing summary is not a reason to fail the document,
-            // but a busy AI is worth waiting for.
-            if (error instanceof AiRateLimitError) throw error;
-          }
-        }
-
-        const noText = !text;
+          .select("id", { count: "exact", head: true })
+          .eq("document_id", id);
+        const noText = !count;
         await update(supabase, id, {
           status: "ready",
           stage: null,
-          summary,
           error: noText
             ? aiReady
               ? "No readable text was found in this file."
@@ -296,7 +292,11 @@ export async function runProcessingStep(
             : null,
           processed_at: new Date().toISOString(),
         });
-        return { status: "ready", stage: null };
+        return {
+          status: "ready",
+          stage: null,
+          background: aiReady && !noText ? () => writeSummary(supabase, id, doc.name) : undefined,
+        };
       }
 
       throw new Error(`Unknown processing stage: ${doc.stage}`);

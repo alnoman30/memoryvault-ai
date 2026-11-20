@@ -3,38 +3,6 @@ import { ArrowRight, FileText, IdCard, MessageSquareText, Receipt } from "lucide
 import { Brand } from "@/components/ui/logo";
 import { btn } from "@/components/ui/styles";
 
-const features = [
-  {
-    title: "Private by design",
-    text: "Every account is isolated at the database level. Other people can never read your files, folders or conversations.",
-    status: "Live",
-  },
-  {
-    title: "A real file manager",
-    text: "Folders, rename, move, preview and download. Files sit in private storage and open only through links that expire after 60 seconds.",
-    status: "Live",
-  },
-  {
-    title: "Any file, any size",
-    text: "Upload any file type. Big files go up in resumable pieces, so a bad connection does not start you over.",
-    status: "Live",
-  },
-  {
-    title: "Reads scans and photos",
-    text: "Text PDFs are read instantly. Scanned pages, photos of receipts and ID cards are read by AI, in Bangla and English.",
-    status: "Live",
-  },
-  {
-    title: "Ask in Bangla or English",
-    text: "A chat assistant that searches your documents by meaning and answers in the language you ask in, and remembers the conversation.",
-    status: "Live",
-  },
-  {
-    title: "Answers you can verify",
-    text: "Every answer points to the document and the page it came from, so you never have to just trust it.",
-    status: "Live",
-  },
-];
 
 export default function Home() {
   return (
@@ -131,32 +99,6 @@ export default function Home() {
             </div>
           </div>
         </div>
-      </section>
-
-      {/* Features */}
-      <section className="mx-auto w-full max-w-6xl px-5 py-20 sm:px-8">
-        <h2 className="font-display text-4xl font-semibold tracking-tight sm:text-5xl">
-          Built around trust.
-        </h2>
-        <ol className="mt-12 divide-y divide-line border-y border-line">
-          {features.map((f, i) => (
-            <li
-              key={f.title}
-              className="grid items-baseline gap-x-8 gap-y-2 py-7 sm:grid-cols-[4rem_minmax(0,1fr)_minmax(0,1.4fr)_5rem]"
-            >
-              <span className="font-mono text-sm text-muted">{String(i + 1).padStart(2, "0")}</span>
-              <h3 className="font-display text-2xl font-semibold">{f.title}</h3>
-              <p className="text-muted">{f.text}</p>
-              <span
-                className={`w-fit rounded-full px-2.5 py-1 font-mono text-[0.65rem] uppercase tracking-wider sm:justify-self-end ${
-                  f.status === "Live" ? "bg-ok-soft text-ok" : "bg-line/60 text-muted"
-                }`}
-              >
-                {f.status === "Live" ? "Live" : "Coming next"}
-              </span>
-            </li>
-          ))}
-        </ol>
       </section>
 
       <footer className="mx-auto mt-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-3 px-5 pb-10 text-sm text-muted sm:px-8">

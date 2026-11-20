@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, KeyRound, Loader2, RefreshCw, Trash2, XCircle } from "lucide-react";
+import { Loader2, RefreshCw, Trash2 } from "lucide-react";
 import { deleteAllChats, failedDocumentIds, updateDisplayName } from "@/app/settings/actions";
 import { processDocument } from "@/components/explorer/processing";
 import { btn, inputClass } from "@/components/ui/styles";
@@ -11,13 +11,6 @@ import { useToast } from "@/components/ui/toast";
 type Props = {
   email: string;
   displayName: string;
-  ai: {
-    configured: boolean;
-    chatModel: string;
-    readerModel: string;
-    embeddingModel: string;
-    maxReadMb: number;
-  };
   stats: {
     total: number;
     ready: number;
@@ -37,7 +30,7 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
   );
 }
 
-export function SettingsView({ email, displayName, ai, stats }: Props) {
+export function SettingsView({ email, displayName, stats }: Props) {
   const [name, setName] = useState(displayName);
   const [saving, startSave] = useTransition();
   const [retrying, setRetrying] = useState(false);
@@ -95,41 +88,6 @@ export function SettingsView({ email, displayName, ai, stats }: Props) {
             Save
           </button>
         </form>
-      </Card>
-
-      <Card title="AI assistant">
-        <p className="flex items-center gap-2 text-sm font-medium">
-          {ai.configured ? (
-            <>
-              <CheckCircle2 className="h-5 w-5 text-ok" /> Connected to Google Gemini
-            </>
-          ) : (
-            <>
-              <XCircle className="h-5 w-5 text-danger" /> Not set up
-            </>
-          )}
-        </p>
-        {!ai.configured && (
-          <p className="mt-3 flex items-start gap-2 rounded-2xl bg-surface p-4 text-sm text-muted">
-            <KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
-            Create a free key at aistudio.google.com, then add it as GEMINI_API_KEY in your
-            server settings (Vercel: Project → Settings → Environment Variables) and redeploy.
-          </p>
-        )}
-        <dl className="mt-4 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[10rem_1fr]">
-          <dt className="text-muted">Chat model</dt>
-          <dd className="font-mono text-xs leading-5">{ai.chatModel}</dd>
-          <dt className="text-muted">Reading model</dt>
-          <dd className="font-mono text-xs leading-5">{ai.readerModel}</dd>
-          <dt className="text-muted">Search model</dt>
-          <dd className="font-mono text-xs leading-5">{ai.embeddingModel}</dd>
-          <dt className="text-muted">AI reads files up to</dt>
-          <dd>{ai.maxReadMb} MB (bigger files are stored only)</dd>
-        </dl>
-        <p className="mt-4 text-xs leading-relaxed text-muted">
-          On the free Gemini plan Google may use what is sent to improve its products, and there
-          are daily limits. When a limit is reached, reading pauses and continues automatically.
-        </p>
       </Card>
 
       <Card title="Documents">

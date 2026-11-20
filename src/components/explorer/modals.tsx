@@ -599,9 +599,11 @@ function UploadForm({
   async function startUpload() {
     setBusy(true);
     const supabase = createClient();
+    // Read locally from the session; storage rules still check it on the server.
     const {
-      data: { user },
-    } = await supabase.auth.getUser();
+      data: { session },
+    } = await supabase.auth.getSession();
+    const user = session?.user;
 
     if (!user) {
       toast("Your session has ended. Please sign in again.", "error");
@@ -615,7 +617,7 @@ function UploadForm({
     const uploadedIds: string[] = [];
     let failed = 0;
 
-    for (const item of items.filter((i) => i.state === "ready")) {
+    const uploadOne = async (item: UploadItem) => {
       patch(item.key, { state: "uploading", progress: 0 });
       const path = makeStoragePath(user.id, crypto.randomUUID(), item.file.name);
 
@@ -630,7 +632,7 @@ function UploadForm({
       if (!result.ok) {
         patch(item.key, { state: "error", message: result.error });
         failed++;
-        continue;
+        return;
       }
 
       const { data: row, error: insertError } = await supabase
@@ -652,17 +654,24 @@ function UploadForm({
           message: `Could not save the file record.${detail(insertError?.message ?? "")}`,
         });
         failed++;
-        continue;
+        return;
       }
 
       patch(item.key, { state: "done", progress: 1 });
       uploadedIds.push(row.id as string);
-    }
+      onUploaded([row.id as string]); // start reading this file right away
+    };
+
+    // Up to 3 files travel at the same time.
+    const queue = items.filter((i) => i.state === "ready");
+    const worker = async () => {
+      for (let item = queue.shift(); item; item = queue.shift()) await uploadOne(item);
+    };
+    await Promise.all([worker(), worker(), worker()]);
 
     setBusy(false);
     router.refresh();
     if (uploadedIds.length > 0) {
-      onUploaded(uploadedIds);
       toast(
         `${uploadedIds.length} file${uploadedIds.length === 1 ? "" : "s"} uploaded. The AI is reading ${uploadedIds.length === 1 ? "it" : "them"} now.`,
       );

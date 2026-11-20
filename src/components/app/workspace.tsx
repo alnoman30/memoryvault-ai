@@ -1,6 +1,7 @@
 import { connection } from "next/server";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { getAuthUser } from "@/lib/supabase/auth";
 import { isUuid } from "@/lib/documents";
 import { buildBreadcrumbs, folderOptions, type FolderNode } from "@/lib/folders";
 import { Explorer } from "@/components/explorer/explorer";
@@ -21,31 +22,32 @@ export async function Workspace({ searchParams }: { searchParams: SearchParams }
   const { folder } = await searchParams;
 
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getAuthUser(supabase);
   if (!user) redirect("/login");
 
-  const [foldersResult, sizesResult] = await Promise.all([
+  // All queries run at the same time: each one is a round trip to Supabase.
+  const requested = typeof folder === "string" && isUuid(folder) ? folder : null;
+  const docsIn = (folderId: string | null) => {
+    const query = supabase
+      .from("documents")
+      .select("id, name, size_bytes, status, error, summary, page_count, folder_id, created_at")
+      .order("created_at", { ascending: false });
+    return folderId ? query.eq("folder_id", folderId) : query.is("folder_id", null);
+  };
+
+  const [foldersResult, sizesResult, requestedDocs] = await Promise.all([
     supabase.from("folders").select("id, name, parent_id").order("name"),
     supabase.from("documents").select("id, size_bytes, status"),
+    docsIn(requested),
   ]);
 
   const allFolders: FolderNode[] = foldersResult.data ?? [];
   const usedBytes = (sizesResult.data ?? []).reduce((sum, d) => sum + (d.size_bytes ?? 0), 0);
 
   // An unknown or foreign folder id simply falls back to the top level.
-  const requested = typeof folder === "string" && isUuid(folder) ? folder : null;
   const currentId =
     requested && allFolders.some((f) => f.id === requested) ? requested : null;
-
-  const docQuery = supabase
-    .from("documents")
-    .select("id, name, size_bytes, status, error, summary, page_count, folder_id, created_at")
-    .order("created_at", { ascending: false });
-  const docsResult = await (currentId
-    ? docQuery.eq("folder_id", currentId)
-    : docQuery.is("folder_id", null));
+  const docsResult = currentId === requested ? requestedDocs : await docsIn(null);
 
   // Never hide a database problem: show it so it can be fixed.
   const loadError = foldersResult.error ?? sizesResult.error ?? docsResult.error;

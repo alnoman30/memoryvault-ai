@@ -22,10 +22,12 @@ export function getAiConfig(): AiConfig {
   return {
     apiKey: process.env.GEMINI_API_KEY?.trim() || null,
     // Tried in order: if one is busy or unavailable, the next one is used.
+    // Flash-Lite answers fastest; set GEMINI_CHAT_MODEL=gemini-3.6-flash for
+    // slower but more careful answers.
     chatModels: list(
       process.env.GEMINI_CHAT_MODEL,
-      "gemini-3.6-flash",
       "gemini-3.5-flash-lite",
+      "gemini-3.6-flash",
       "gemini-flash-latest",
     ),
     readerModels: list(

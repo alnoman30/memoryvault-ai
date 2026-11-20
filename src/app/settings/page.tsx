@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { AppShell, ShellSkeleton } from "@/components/app/app-shell";
 import { SettingsView } from "@/components/settings/settings-view";
 import { createClient } from "@/lib/supabase/server";
-import { getAiConfig } from "@/lib/ai/config";
+import { getAuthUser } from "@/lib/supabase/auth";
 
 export const metadata = { title: "Settings · MemoryVault" };
 
@@ -19,9 +19,7 @@ export default function SettingsPage() {
 async function SettingsWorkspace() {
   await connection();
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getAuthUser(supabase);
   if (!user) redirect("/login");
 
   const [profile, docs, chats] = await Promise.all([
@@ -32,7 +30,6 @@ async function SettingsWorkspace() {
 
   const rows = docs.data ?? [];
   const count = (status: string) => rows.filter((d) => d.status === status).length;
-  const ai = getAiConfig();
 
   return (
     <AppShell
@@ -43,13 +40,6 @@ async function SettingsWorkspace() {
       <SettingsView
         email={user.email ?? ""}
         displayName={profile.data?.display_name ?? ""}
-        ai={{
-          configured: ai.apiKey !== null,
-          chatModel: ai.chatModels[0],
-          readerModel: ai.readerModels[0],
-          embeddingModel: ai.embeddingModel,
-          maxReadMb: Math.round(ai.maxReadBytes / 1048576),
-        }}
         stats={{
           total: rows.length,
           ready: count("ready"),

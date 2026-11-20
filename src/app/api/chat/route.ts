@@ -1,5 +1,6 @@
 import type { Content } from "@google/genai";
 import { createClient } from "@/lib/supabase/server";
+import { getAuthUser } from "@/lib/supabase/auth";
 import { isUuid } from "@/lib/documents";
 import { isAiConfigured } from "@/lib/ai/config";
 import { AiRateLimitError, friendlyAiError } from "@/lib/ai/errors";
@@ -41,22 +42,29 @@ export async function POST(request: Request) {
   const requestedId = isUuid(body?.conversationId) ? body.conversationId : null;
 
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getAuthUser(supabase);
   if (!user) return Response.json({ error: "Please sign in again." }, { status: 401 });
 
-  // Conversation: reuse the user's own one, or start a new one.
-  let conversationId = requestedId;
+  // Conversation: reuse the user's own one (and load its memory at the same
+  // time), or start a new one.
+  let conversationId: string | null = null;
   let title = titleFrom(message);
-  if (conversationId) {
-    const { data } = await supabase
-      .from("conversations")
-      .select("id, title")
-      .eq("id", conversationId)
-      .maybeSingle();
-    if (!data) conversationId = null;
-    else title = data.title;
+  let history: { role: string; content: string }[] = [];
+  if (requestedId) {
+    const [conv, past] = await Promise.all([
+      supabase.from("conversations").select("id, title").eq("id", requestedId).maybeSingle(),
+      supabase
+        .from("messages")
+        .select("role, content")
+        .eq("conversation_id", requestedId)
+        .order("created_at", { ascending: false })
+        .limit(16),
+    ]);
+    if (conv.data) {
+      conversationId = conv.data.id as string;
+      title = conv.data.title as string;
+      history = (past.data ?? []).reverse();
+    }
   }
   if (!conversationId) {
     const { data, error } = await supabase
@@ -69,20 +77,6 @@ export async function POST(request: Request) {
     }
     conversationId = data.id as string;
   }
-
-  // Earlier messages are the chat's memory.
-  const { data: historyRows } = await supabase
-    .from("messages")
-    .select("role, content")
-    .eq("conversation_id", conversationId)
-    .order("created_at", { ascending: false })
-    .limit(16);
-  const history = (historyRows ?? []).reverse();
-
-  const { error: saveError } = await supabase
-    .from("messages")
-    .insert({ conversation_id: conversationId, role: "user", content: message });
-  if (saveError) return Response.json({ error: "Could not save your message." }, { status: 500 });
 
   const encoder = new TextEncoder();
   const convId = conversationId;
@@ -102,23 +96,40 @@ export async function POST(request: Request) {
           [...history].reverse().find((m) => m.role === "user")?.content ?? null;
         const query = searchQuery(message, previousQuestion);
 
-        // 1. Search the user's documents (meaning + keywords).
-        let embedding: number[] | null = null;
-        if (aiReady) {
-          try {
-            [embedding] = await embedTexts([query], "RETRIEVAL_QUERY");
-          } catch (error) {
-            // Busy embedding service: keyword search still works.
-            if (!(error instanceof AiRateLimitError)) throw error;
+        // Save the question, search the documents and load the document list
+        // at the same time.
+        const search = async () => {
+          let embedding: number[] | null = null;
+          if (aiReady) {
+            try {
+              [embedding] = await embedTexts([query], "RETRIEVAL_QUERY");
+            } catch (error) {
+              // Busy embedding service: keyword search still works.
+              if (!(error instanceof AiRateLimitError)) throw error;
+            }
           }
-        }
-        const { data: matches, error: searchError } = await supabase.rpc("match_chunks", {
-          query_embedding: embedding ? JSON.stringify(embedding) : null,
-          query_text: keywordQuery(query),
-          match_count: 10,
-        });
-        if (searchError) throw new Error(`Search failed: ${searchError.message}`);
-        sources = toSources((matches ?? []) as RetrievedChunk[]);
+          const { data, error } = await supabase.rpc("match_chunks", {
+            query_embedding: embedding ? JSON.stringify(embedding) : null,
+            query_text: keywordQuery(query),
+            match_count: 10,
+          });
+          if (error) throw new Error(`Search failed: ${error.message}`);
+          return (data ?? []) as RetrievedChunk[];
+        };
+        const [saved, matches, docsResult] = await Promise.all([
+          supabase.from("messages").insert({ conversation_id: convId, role: "user", content: message }),
+          search(),
+          aiReady
+            ? supabase
+                .from("documents")
+                .select("name, summary, page_count")
+                .order("created_at", { ascending: false })
+                .limit(80)
+            : Promise.resolve({ data: [] }),
+        ]);
+        if (saved.error) throw new Error("Could not save your message.");
+        sources = toSources(matches);
+        const docs = docsResult.data;
 
         if (!aiReady) {
           answer = sources.length
@@ -129,13 +140,7 @@ export async function POST(request: Request) {
             : "The AI is not set up yet (GEMINI_API_KEY is missing), and no document matched your words.";
           send({ type: "delta", text: answer });
         } else {
-          // 2. Ask Gemini, with the excerpts and the document list.
-          const { data: docs } = await supabase
-            .from("documents")
-            .select("name, summary, page_count")
-            .order("created_at", { ascending: false })
-            .limit(80);
-
+          // Ask Gemini, with the excerpts and the document list.
           const contents: Content[] = history.map((m) => ({
             role: m.role === "assistant" ? "model" : "user",
             parts: [{ text: m.content }],
@@ -164,26 +169,28 @@ export async function POST(request: Request) {
           }
         }
 
-        // 3. Save the answer with the sources it actually cited.
+        // Save the answer with the sources it actually cited.
         const used = citedSources(answer, sources);
-        const { data: saved } = await supabase
-          .from("messages")
-          .insert({
-            conversation_id: convId,
-            role: "assistant",
-            content: answer,
-            sources: used.map(({ n, document_id, name, page }) => ({ n, document_id, name, page })),
-          })
-          .select("id")
-          .single();
-        await supabase
-          .from("conversations")
-          .update({ updated_at: new Date().toISOString() })
-          .eq("id", convId);
+        const [savedAnswer] = await Promise.all([
+          supabase
+            .from("messages")
+            .insert({
+              conversation_id: convId,
+              role: "assistant",
+              content: answer,
+              sources: used.map(({ n, document_id, name, page }) => ({ n, document_id, name, page })),
+            })
+            .select("id")
+            .single(),
+          supabase
+            .from("conversations")
+            .update({ updated_at: new Date().toISOString() })
+            .eq("id", convId),
+        ]);
 
         send({
           type: "done",
-          messageId: saved?.id ?? null,
+          messageId: savedAnswer.data?.id ?? null,
           sources: used.map(({ n, document_id, name, page }) => ({ n, document_id, name, page })),
         });
       } catch (error) {

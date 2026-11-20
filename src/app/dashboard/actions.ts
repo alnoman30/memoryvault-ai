@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { getAuthUser } from "@/lib/supabase/auth";
 import { cleanName, isUuid } from "@/lib/documents";
 
 type Failure = { ok: false; error: string };
@@ -24,9 +25,7 @@ function fail(error?: { message: string } | null): Failure {
 // database still decides what is allowed. The checks here give clear errors.
 async function getContext() {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getAuthUser(supabase);
   return { supabase, user };
 }
 

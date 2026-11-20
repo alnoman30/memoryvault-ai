@@ -68,7 +68,7 @@ export function processDocument(
         onWaiting?.(result.message ?? "Waiting for the free AI limit…");
         await sleep(result.retryAfterMs);
       } else {
-        await sleep(300);
+        await sleep(150);
       }
     }
     return "processing";
