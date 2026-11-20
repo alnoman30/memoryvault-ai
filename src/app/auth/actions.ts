@@ -14,14 +14,14 @@ export async function login(
   const password = String(formData.get("password") ?? "");
 
   if (!email || !password) {
-    return { error: "ইমেইল ও পাসওয়ার্ড দিন। / Enter email and password." };
+    return { error: "Enter your email and password." };
   }
 
   const supabase = await createClient();
   const { error } = await supabase.auth.signInWithPassword({ email, password });
 
   if (error) {
-    return { error: "ইমেইল বা পাসওয়ার্ড ঠিক নয়। / Wrong email or password." };
+    return { error: "Wrong email or password, or the email is not confirmed yet." };
   }
 
   redirect("/dashboard");
@@ -36,12 +36,10 @@ export async function signup(
   const password = String(formData.get("password") ?? "");
 
   if (!email || !password) {
-    return { error: "ইমেইল ও পাসওয়ার্ড দিন। / Enter email and password." };
+    return { error: "Enter your email and a password." };
   }
   if (password.length < 8) {
-    return {
-      error: "পাসওয়ার্ড কমপক্ষে ৮ অক্ষরের হতে হবে। / Password must be at least 8 characters.",
-    };
+    return { error: "Your password must be at least 8 characters." };
   }
 
   const h = await headers();
@@ -62,14 +60,14 @@ export async function signup(
     return { error: error.message };
   }
 
-  // If email confirmation is off, the user is already logged in.
+  // If email confirmation is off, the user is already signed in.
   if (data.session) {
     redirect("/dashboard");
   }
 
   return {
     message:
-      "আপনার ইমেইলে একটি confirmation link পাঠানো হয়েছে। ওটায় click করুন। / We sent a confirmation link to your email.",
+      "Check your inbox. We sent a confirmation link to your email. Open it to finish creating your account.",
   };
 }
 

@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Standalone database test project (has its own package.json).
+    "supabase/**",
   ]),
 ]);
 

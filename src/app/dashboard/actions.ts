@@ -4,13 +4,21 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { cleanName, isUuid } from "@/lib/documents";
 
-export type ActionResult = { ok: true } | { ok: false; error: string };
-export type UrlResult = { ok: true; url: string } | { ok: false; error: string };
+type Failure = { ok: false; error: string };
+export type ActionResult = { ok: true } | Failure;
+export type UrlResult = { ok: true; url: string } | Failure;
 
-const NOT_LOGGED_IN = "আবার লগইন করুন। / Please log in again.";
-const BAD_NAME =
-  "নাম ১-২৫৫ অক্ষরের হতে হবে, / বা \\ থাকা যাবে না। / Name must be 1-255 characters, without / or \\.";
-const FAILED = "কাজটি করা যায়নি। আবার চেষ্টা করুন। / Something went wrong. Try again.";
+const NOT_LOGGED_IN = "Your session has ended. Please sign in again.";
+const BAD_NAME = "Use 1 to 255 characters, without / or \\.";
+const FAILED = "Something went wrong. Please try again.";
+
+// While developing, include the real database message so problems can be
+// diagnosed. In production users only see the friendly text.
+function fail(error?: { message: string } | null): Failure {
+  const detail =
+    process.env.NODE_ENV !== "production" && error ? ` (${error.message})` : "";
+  return { ok: false, error: `${FAILED}${detail}` };
+}
 
 // Every action runs as the logged-in user, so Row Level Security in the
 // database still decides what is allowed. The checks here give clear errors.
@@ -28,7 +36,7 @@ export async function createFolder(
 ): Promise<ActionResult> {
   const clean = cleanName(name);
   if (!clean) return { ok: false, error: BAD_NAME };
-  if (parentId !== null && !isUuid(parentId)) return { ok: false, error: FAILED };
+  if (parentId !== null && !isUuid(parentId)) return fail();
 
   const { supabase, user } = await getContext();
   if (!user) return { ok: false, error: NOT_LOGGED_IN };
@@ -36,7 +44,7 @@ export async function createFolder(
   const { error } = await supabase
     .from("folders")
     .insert({ name: clean, parent_id: parentId });
-  if (error) return { ok: false, error: FAILED };
+  if (error) return fail(error);
 
   revalidatePath("/dashboard");
   return { ok: true };
@@ -45,13 +53,13 @@ export async function createFolder(
 export async function renameFolder(id: string, name: string): Promise<ActionResult> {
   const clean = cleanName(name);
   if (!clean) return { ok: false, error: BAD_NAME };
-  if (!isUuid(id)) return { ok: false, error: FAILED };
+  if (!isUuid(id)) return fail();
 
   const { supabase, user } = await getContext();
   if (!user) return { ok: false, error: NOT_LOGGED_IN };
 
   const { error } = await supabase.from("folders").update({ name: clean }).eq("id", id);
-  if (error) return { ok: false, error: FAILED };
+  if (error) return fail(error);
 
   revalidatePath("/dashboard");
   return { ok: true };
@@ -59,7 +67,7 @@ export async function renameFolder(id: string, name: string): Promise<ActionResu
 
 // A folder is only deleted when it is empty, so nothing is lost by accident.
 export async function deleteFolder(id: string): Promise<ActionResult> {
-  if (!isUuid(id)) return { ok: false, error: FAILED };
+  if (!isUuid(id)) return fail();
 
   const { supabase, user } = await getContext();
   if (!user) return { ok: false, error: NOT_LOGGED_IN };
@@ -68,18 +76,17 @@ export async function deleteFolder(id: string): Promise<ActionResult> {
     supabase.from("folders").select("id").eq("parent_id", id).limit(1),
     supabase.from("documents").select("id").eq("folder_id", id).limit(1),
   ]);
-  if (subfolders.error || files.error) return { ok: false, error: FAILED };
+  if (subfolders.error || files.error) return fail(subfolders.error ?? files.error);
 
   if ((subfolders.data?.length ?? 0) > 0 || (files.data?.length ?? 0) > 0) {
     return {
       ok: false,
-      error:
-        "ফোল্ডারটি ফাঁকা নয়। আগে ভেতরের জিনিস সরান বা মুছুন। / The folder is not empty. Move or delete its contents first.",
+      error: "This folder is not empty. Move or delete what is inside it first.",
     };
   }
 
   const { error } = await supabase.from("folders").delete().eq("id", id);
-  if (error) return { ok: false, error: FAILED };
+  if (error) return fail(error);
 
   revalidatePath("/dashboard");
   return { ok: true };
@@ -88,13 +95,13 @@ export async function deleteFolder(id: string): Promise<ActionResult> {
 export async function renameDocument(id: string, name: string): Promise<ActionResult> {
   const clean = cleanName(name);
   if (!clean) return { ok: false, error: BAD_NAME };
-  if (!isUuid(id)) return { ok: false, error: FAILED };
+  if (!isUuid(id)) return fail();
 
   const { supabase, user } = await getContext();
   if (!user) return { ok: false, error: NOT_LOGGED_IN };
 
   const { error } = await supabase.from("documents").update({ name: clean }).eq("id", id);
-  if (error) return { ok: false, error: FAILED };
+  if (error) return fail(error);
 
   revalidatePath("/dashboard");
   return { ok: true };
@@ -104,8 +111,8 @@ export async function moveDocument(
   id: string,
   folderId: string | null,
 ): Promise<ActionResult> {
-  if (!isUuid(id)) return { ok: false, error: FAILED };
-  if (folderId !== null && !isUuid(folderId)) return { ok: false, error: FAILED };
+  if (!isUuid(id)) return fail();
+  if (folderId !== null && !isUuid(folderId)) return fail();
 
   const { supabase, user } = await getContext();
   if (!user) return { ok: false, error: NOT_LOGGED_IN };
@@ -114,14 +121,14 @@ export async function moveDocument(
     .from("documents")
     .update({ folder_id: folderId })
     .eq("id", id);
-  if (error) return { ok: false, error: FAILED };
+  if (error) return fail(error);
 
   revalidatePath("/dashboard");
   return { ok: true };
 }
 
 export async function deleteDocument(id: string): Promise<ActionResult> {
-  if (!isUuid(id)) return { ok: false, error: FAILED };
+  if (!isUuid(id)) return fail();
 
   const { supabase, user } = await getContext();
   if (!user) return { ok: false, error: NOT_LOGGED_IN };
@@ -131,12 +138,12 @@ export async function deleteDocument(id: string): Promise<ActionResult> {
     .select("storage_path")
     .eq("id", id)
     .maybeSingle();
-  if (findError || !doc) return { ok: false, error: FAILED };
+  if (findError || !doc) return fail(findError);
 
   // Delete the database row first, then the file. If removing the file
   // fails, the user just has an invisible leftover file, never a broken row.
   const { error: deleteError } = await supabase.from("documents").delete().eq("id", id);
-  if (deleteError) return { ok: false, error: FAILED };
+  if (deleteError) return fail(deleteError);
 
   const { error: storageError } = await supabase.storage
     .from("documents")
@@ -154,7 +161,7 @@ export async function getDocumentUrl(
   id: string,
   mode: "preview" | "download",
 ): Promise<UrlResult> {
-  if (!isUuid(id)) return { ok: false, error: FAILED };
+  if (!isUuid(id)) return fail();
 
   const { supabase, user } = await getContext();
   if (!user) return { ok: false, error: NOT_LOGGED_IN };
@@ -164,7 +171,7 @@ export async function getDocumentUrl(
     .select("storage_path, name")
     .eq("id", id)
     .maybeSingle();
-  if (findError || !doc) return { ok: false, error: FAILED };
+  if (findError || !doc) return fail(findError);
 
   const { data, error } = await supabase.storage
     .from("documents")
@@ -173,7 +180,7 @@ export async function getDocumentUrl(
       60,
       mode === "download" ? { download: doc.name } : undefined,
     );
-  if (error || !data) return { ok: false, error: FAILED };
+  if (error || !data) return fail(error);
 
   return { ok: true, url: data.signedUrl };
 }

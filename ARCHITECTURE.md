@@ -1,39 +1,48 @@
 # MemoryVault AI - Architecture
 
 ## Stack
-- **Next.js (App Router) + TypeScript** - web app and server routes
-- **Tailwind CSS + shadcn/ui** - responsive UI
-- **Supabase Auth** - user registration and login
-- **PostgreSQL + pgvector** - data and semantic search
-- **Supabase Storage (private bucket)** - uploaded files
-- **Vercel** - hosting
+- **Next.js (App Router) + TypeScript**: web app and server actions
+- **Tailwind CSS**: styling, with design tokens in `src/app/globals.css`
+- **Supabase Auth**: registration and login
+- **PostgreSQL**: data, with Row Level Security (RLS) on every table
+- **Supabase Storage**: one private bucket, `documents`
+- **Vercel**: hosting
 
-## Data flow (planned)
-1. User uploads a file -> stored in a private bucket under `<user_id>/...`
-2. Server extracts text (PDF/DOCX/TXT directly, images via OCR)
-3. Text is split into chunks, each chunk gets an embedding vector
-4. Chunks + page numbers + embeddings are saved in PostgreSQL
-5. In chat, the question is embedded, similar chunks are retrieved,
-   and the AI answers with citations (file name + page)
+## Interface language
+The interface is English only. Only the AI chat assistant speaks Bangla and English.
 
-## AI provider abstraction
-All AI calls go through one interface in `src/lib/ai/` so providers
-(Gemini, local models, others) can be swapped without touching the rest
-of the app.
+## Data model (`supabase/migrations/0001_init.sql`)
+- `profiles`: one row per user, created by a database trigger at sign up.
+  `allow_external_ai` is `false` by default.
+- `folders`: nested folders (`parent_id`).
+- `documents`: file metadata. The file itself lives in Storage at
+  `<user_id>/<random id>.<ext>`.
+  `is_sensitive` marks identity documents.
+- Helper `owns_folder(uuid)`: a SECURITY DEFINER check used by policies. A policy on
+  `folders` cannot query `folders` directly (Postgres reports "infinite recursion
+  detected in policy"), so the lookup goes through this function.
 
-## Isolation
-Every table has a `user_id` column and Row Level Security (RLS) policies
-so a user can only ever read or write their own rows and files.
-
-## Status
-- Done: project scaffold, Supabase auth (sign up / log in / log out), database
-  schema with Row Level Security, private storage bucket, file manager
-  (folders, upload, rename, move, preview, download, delete).
-- Next: text extraction and OCR, embeddings and vector search, AI chat.
-
-## File manager notes
-- Files are uploaded from the browser straight to the private `documents`
-  bucket under `<user_id>/<random id>.<ext>`; the original name is kept only
-  in the `documents` table.
+## Request flow
+- The browser uploads a file straight to the private bucket. Storage policies only
+  allow writing inside the signed-in user's own folder, then a `documents` row is added.
+- Folder and file operations are server actions that run as the signed-in user, so RLS
+  applies to everything they do.
 - Preview and download use signed links that expire after 60 seconds.
 - A folder can only be deleted when it is empty.
+
+## UI building blocks (`src/components/ui`)
+`Modal` (native `<dialog>`; becomes a bottom sheet on phones), `Toast`, `Menu`,
+button and input class helpers. File manager screens are in `src/components/explorer`.
+
+## Planned: reading documents with an AI provider
+There is no in-browser OCR. Text extraction will go through an **AI provider
+abstraction** (`src/lib/ai/`), starting with Gemini, so the provider can be swapped.
+
+1. After upload, the server sends the file to the provider to extract text with page numbers.
+2. The text is split into chunks, embedded, and stored with `pgvector`.
+3. In chat, the question is embedded, similar chunks are retrieved, and the assistant
+   answers with citations (file name and page).
+
+Rule: a document marked `is_sensitive` is **never** sent to an external provider unless
+the user has explicitly allowed it (`profiles.allow_external_ai`) after being told what
+that means.

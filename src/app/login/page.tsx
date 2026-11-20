@@ -1,9 +1,12 @@
 import { AuthForm } from "@/components/auth-form";
+import { AuthShell } from "@/components/auth-shell";
+
+export const metadata = { title: "Sign in · MemoryVault" };
 
 export default function LoginPage() {
   return (
-    <main className="flex flex-1 items-center justify-center px-6 py-16">
+    <AuthShell>
       <AuthForm mode="login" />
-    </main>
+    </AuthShell>
   );
 }

@@ -1,5 +1,8 @@
 export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024; // 20 MB (matches the storage bucket limit)
 
+// Supabase free plan: 1 GB of file storage for the whole project.
+export const FREE_STORAGE_BYTES = 1024 * 1024 * 1024;
+
 export const ALLOWED_EXTENSIONS = [
   "pdf",
   "png",
@@ -18,17 +21,17 @@ export function getExtension(fileName: string): string {
   return fileName.slice(dot + 1).toLowerCase();
 }
 
-// Returns an error message (Bangla / English) or null if the file is acceptable.
+// Returns a short error message, or null if the file is acceptable.
 export function validateUpload(file: { name: string; size: number }): string | null {
   const ext = getExtension(file.name);
   if (!(ALLOWED_EXTENSIONS as readonly string[]).includes(ext)) {
-    return `"${file.name}": এই ধরনের ফাইল সমর্থিত নয়। / Unsupported file type. (PDF, PNG, JPG, WEBP, TXT, MD, CSV, DOCX)`;
+    return "Unsupported file type. Use PDF, PNG, JPG, WEBP, TXT, MD, CSV or DOCX.";
   }
   if (file.size === 0) {
-    return `"${file.name}": ফাইলটি ফাঁকা। / The file is empty.`;
+    return "This file is empty.";
   }
   if (file.size > MAX_UPLOAD_BYTES) {
-    return `"${file.name}": ফাইল ২০ MB-এর বেশি বড়। / File is larger than 20 MB.`;
+    return "This file is larger than 20 MB.";
   }
   return null;
 }

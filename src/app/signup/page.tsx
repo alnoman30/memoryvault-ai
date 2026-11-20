@@ -1,9 +1,12 @@
 import { AuthForm } from "@/components/auth-form";
+import { AuthShell } from "@/components/auth-shell";
+
+export const metadata = { title: "Create account · MemoryVault" };
 
 export default function SignupPage() {
   return (
-    <main className="flex flex-1 items-center justify-center px-6 py-16">
+    <AuthShell>
       <AuthForm mode="signup" />
-    </main>
+    </AuthShell>
   );
 }
